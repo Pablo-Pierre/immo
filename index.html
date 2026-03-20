@@ -1,0 +1,246 @@
+        // Détection cuisine équipée ou aménagée ou éléments de base
+        function hasKitchen(offer) {
+            const body = offer.body.toLowerCase();
+            // Recherche mots-clés courants pour cuisine équipée ou aménagée
+            const keywords = [
+                'cuisine équipée',
+                'cuisine aménagée',
+                'cuisine meublée',
+                'kitchenette',
+                'cuisine avec',
+                'réfrigérateur',
+                'plaques',
+                'four',
+                'hotte',
+                'meubles de cuisine',
+                'évier',
+                'cuisinière'
+            ];
+            return keywords.some(word => body.includes(word));
+        }
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparateur d'offres immobilières</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background: #2c3e50;
+            color: #fff;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 900px;
+            margin: 30px auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 24px;
+        }
+        h2 {
+            color: #34495e;
+        }
+        .offer {
+            display: flex;
+            gap: 24px;
+            border-bottom: 1px solid #eee;
+            padding: 18px 0;
+        }
+        .offer:last-child {
+            border-bottom: none;
+        }
+        .offer-img {
+            width: 160px;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 6px;
+        }
+        .offer-details {
+            flex: 1;
+        }
+        .highlight {
+            background: #eafcda;
+            border-left: 4px solid #27ae60;
+            padding-left: 12px;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #27ae60;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #219150;
+        }
+        .eco-badge {
+            display: inline-block;
+            background: #b6e7a7;
+            color: #217a3b;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 2px 8px;
+            margin-left: 8px;
+            font-size: 0.95em;
+            vertical-align: middle;
+        }
+
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Comparateur d'offres immobilières</h1>
+        <p>Classement par meilleur rapport qualité/prix</p>
+    </header>
+    <div class="container" id="offers"></div>
+        <div class="container" id="pagination"></div>
+    <script>
+        async function fetchOffers() {
+            const response = await fetch('compiled-results (1).json');
+            const data = await response.json();
+            return data;
+        }
+
+        function getYield(offer) {
+            const price = offer.price[0];
+            const body = offer.body;
+            const loyerMatch = body.match(/Loyer annuel perçu\s*:\s*([\d ]+)EUR/);
+            const loyer = loyerMatch ? parseInt(loyerMatch[1].replace(/\s/g, '')) : 0;
+            if (!price || !loyer) return null;
+            return loyer / price * 100;
+        }
+
+        function getTaxeFoncier(offer) {
+            const body = offer.body;
+            const match = body.match(/Taxe foncière\s*:\s*([\d ]+)EUR/);
+            return match ? parseInt(match[1].replace(/\s/g, '')) : null;
+        }
+
+        function getSurface(offer) {
+            const attr = offer.attributes.find(attr => attr.key === 'square');
+            return attr ? parseFloat(attr.value) : null;
+        }
+
+        function getPublicationDate(offer) {
+            return new Date(offer.first_publication_date);
+        }
+
+        // Détection logement écologique : DPE A ou B ou < 90 kWh/m²/an
+        function isEcoFriendly(offer) {
+            // Cherche DPE dans le body
+            const dpeMatch = offer.body.match(/Consommation énergie primaire\s*:\s*(\d+) kWh\/m²\/an/);
+            const dpeValue = dpeMatch ? parseInt(dpeMatch[1]) : null;
+            // Cherche lettre DPE
+            const dpeLetterMatch = offer.body.match(/DPE\s*:\s*([A-G])/i);
+            const dpeLetter = dpeLetterMatch ? dpeLetterMatch[1].toUpperCase() : null;
+            return (dpeLetter === 'A' || dpeLetter === 'B' || (dpeValue !== null && dpeValue < 90));
+        }
+
+        function computeScore(offer) {
+            const price = offer.price[0];
+            const surface = getSurface(offer);
+            // Favorise d'abord la surface (plus grand = mieux), puis le prix (moins cher = mieux)
+            // Normalisation surface (min 20, max 120)
+            const surfaceNorm = surface ? Math.max(0, Math.min(1, (surface - 20) / (120 - 20))) : 0;
+            // Normalisation prix (min 50k, max 500k)
+            const priceNorm = price ? 1 - Math.max(0, Math.min(1, (price - 50000) / (500000 - 50000))) : 0;
+            // Score pondéré : surface (60%), prix (40%)
+            let score = surfaceNorm * 60 + priceNorm * 40;
+            // Bonus écologique : +10% si logement écologique
+            if (isEcoFriendly(offer)) score *= 1.10;
+            return score;
+        }
+
+        // Pagination
+        let currentPage = 1;
+        const pageSize = 10;
+        let sortedOffers = [];
+
+        function renderOffersPage(page) {
+            const container = document.getElementById('offers');
+            container.innerHTML = '';
+            const start = (page - 1) * pageSize;
+            const end = start + pageSize;
+            const pageOffers = sortedOffers.slice(start, end);
+            pageOffers.forEach((offer, idx) => {
+                const yieldValue = getYield(offer);
+                const highlight = start + idx === 0 ? 'highlight' : '';
+                const eco = isEcoFriendly(offer);
+                container.innerHTML += `
+                    <div class="offer ${highlight}">
+                        <img class="offer-img" src="${offer.images.thumb_url}" alt="Image bien">
+                        <div class="offer-details">
+                            <h2>${offer.subject}${eco ? '<span class=\"eco-badge\">Écologique</span>' : ''}</h2>
+                            <p><strong>Prix :</strong> ${offer.price[0].toLocaleString()} €</p>
+                            <p><strong>Surface :</strong> ${offer.attributes.find(attr => attr.key === 'square')?.value_label || 'N/A'}</p>
+                            <p><strong>Rendement brut :</strong> ${yieldValue ? yieldValue.toFixed(2) + ' %' : 'N/A'}</p>
+                            <p><strong>Taxe foncière :</strong> ${getTaxeFoncier(offer) !== null ? getTaxeFoncier(offer) + ' €' : 'N/A'}</p>
+                            <p><strong>Note :</strong> ${offer.score.toFixed(1)} / 100</p>
+                            <p>${offer.body.split('\\n').slice(0, 4).join('<br>')}</p>
+                            <a class="btn" href="${offer.url}" target="_blank">Voir l'annonce</a>
+                        </div>
+                    </div>
+                `;
+            });
+            renderPagination(page);
+        }
+
+        function renderPagination(page) {
+            const pagination = document.getElementById('pagination');
+            const totalPages = Math.ceil(sortedOffers.length / pageSize);
+            let html = '';
+            if (totalPages > 1) {
+                html += '<div style="text-align:center;margin-top:20px">';
+                for (let i = 1; i <= totalPages; i++) {
+                    html += `<button onclick="window.goToPage(${i})" style="margin:0 4px;padding:6px 12px;border-radius:4px;border:none;background:${i===page?'#27ae60':'#eee'};color:${i===page?'#fff':'#34495e'};font-weight:bold;cursor:pointer;">${i}</button>`;
+                }
+                html += '</div>';
+            }
+            pagination.innerHTML = html;
+        }
+
+        window.goToPage = function(page) {
+            currentPage = page;
+            renderOffersPage(page);
+        }
+
+function renderAllOffers(offers) {
+    // Sépare les annonces avec 1 chambre et celles avec plus
+    const withOneBedroom = offers.filter(offer => {
+        const attr = offer.attributes.find(attr => attr.key === 'bedrooms');
+        return attr && parseInt(attr.value) === 1;
+    });
+    const withMoreBedrooms = offers.filter(offer => {
+        const attr = offer.attributes.find(attr => attr.key === 'bedrooms');
+        return attr && parseInt(attr.value) > 1;
+    });
+    withOneBedroom.forEach(offer => {
+        offer.score = computeScore(offer);
+    });
+    withMoreBedrooms.forEach(offer => {
+        offer.score = computeScore(offer);
+    });
+    const sortedOne = withOneBedroom.slice().sort((a, b) => b.score - a.score);
+    const sortedMore = withMoreBedrooms.slice().sort((a, b) => b.score - a.score);
+    sortedOffers = [...sortedOne, ...sortedMore];
+    currentPage = 1;
+    renderOffersPage(currentPage);
+}
+
+fetchOffers().then(renderAllOffers);
+    </script>
+</body>
+</html>
